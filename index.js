@@ -4863,7 +4863,7 @@ const api = {
 
     if (path === '/config') {
       if (method === 'GET') {
-        const { JWT_SECRET, ADMIN_PASSWORD, TG_BOT_TOKEN, NOTIFYX_API_KEY, WEBHOOK_HEADERS, WECHATBOT_WEBHOOK, RESEND_API_KEY, BARK_DEVICE_KEY, THIRD_PARTY_API_TOKEN, ...safeConfig } = config;
+        const { JWT_SECRET, ADMIN_PASSWORD, TG_BOT_TOKEN, NOTIFYX_API_KEY, WEBHOOK_URL, WEBHOOK_HEADERS, WECHATBOT_WEBHOOK, RESEND_API_KEY, BARK_DEVICE_KEY, THIRD_PARTY_API_TOKEN, ...safeConfig } = config;
         return new Response(
           JSON.stringify(safeConfig),
           { headers: { 'Content-Type': 'application/json' } }
@@ -5327,7 +5327,7 @@ async function getConfig(env) {
 
     // 确保JWT_SECRET的一致性
     let jwtSecret = config.JWT_SECRET;
-    if (!jwtSecret || jwtSecret === 'your-secret-key') {
+    if (!jwtSecret || jwtSecret === 'your-secret-key' || jwtSecret.length < 96) {
       jwtSecret = generateRandomSecret();
       console.log('[配置] 生成新的JWT密钥');
 
