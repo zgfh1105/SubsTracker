@@ -120,7 +120,7 @@ Fork仓库,然后点击自己仓库里的部署按钮，等待部署完成,**注
 
 ### 🔐 第三方 API 安全调用
 - 通过 `POST /api/notify/{token}` 可触发系统通知，请在后台配置“第三方 API 访问令牌”
-- 令牌也可通过 `Authorization: Bearer <token>` 或 `?token=<token>` 传入
+- 推荐通过 `Authorization: Bearer <token>` 传入。路径和查询参数传递可能进入访问日志，谨慎使用
 - 未配置或令牌不匹配时接口会直接拒绝请求，建议定期更换随机令牌
 
 
@@ -158,7 +158,7 @@ Fork仓库,然后点击自己仓库里的部署按钮，等待部署完成,**注
 ![image](https://github.com/user-attachments/assets/25b663b3-8e8e-4386-a499-9b6bf12ead76)
 
 
-4.打开worker提供的域名地址,输入默认账号密码: admin  password (或者admin admin123),可以在代码中查看默认账号密码!
+4. 打开 Worker 提供的域名地址，使用首次部署配置的管理员账号登录。旧版默认值为 admin / password；首次登录后请立即设置强密码。不要将默认密码用于公网部署。
 
 ![image](https://github.com/user-attachments/assets/5dac1ce0-43a3-4642-925c-d9cf21076454)
 
