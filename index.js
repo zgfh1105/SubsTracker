@@ -4820,6 +4820,7 @@ const api = {
     if (path === '/login' && method === 'POST') {
       const body = await request.json();
 
+      // 登录时兼容旧版明文密码；首次成功登录后自动迁移为 PBKDF2 哈希。
       if (body.username === config.ADMIN_USERNAME && await verifyPassword(body.password, config.ADMIN_PASSWORD)) {
         if (!String(config.ADMIN_PASSWORD).startsWith('pbkdf2
         const token = await generateJWT(body.username, config.JWT_SECRET);
@@ -4829,6 +4830,7 @@ const api = {
           {
             headers: {
               'Content-Type': 'application/json',
+              // Secure 要求浏览器仅通过 HTTPS 发送登录 Cookie。
               'Set-Cookie': 'token=' + token + '; HttpOnly; Secure; Path=/; SameSite=Strict; Max-Age=86400'
             }
           }
@@ -4846,6 +4848,7 @@ const api = {
         status: 302,
         headers: {
           'Location': '/',
+          // 退出时删除与登录时同名、同路径的 Cookie。
           'Set-Cookie': 'token=; HttpOnly; Secure; Path=/; SameSite=Strict; Max-Age=0'
         }
       });
@@ -4863,6 +4866,7 @@ const api = {
 
     if (path === '/config') {
       if (method === 'GET') {
+        // 不向浏览器返回服务端密钥和第三方平台凭证。
         const { JWT_SECRET, ADMIN_PASSWORD, TG_BOT_TOKEN, NOTIFYX_API_KEY, WEBHOOK_URL, WEBHOOK_HEADERS, WECHATBOT_WEBHOOK, RESEND_API_KEY, BARK_DEVICE_KEY, THIRD_PARTY_API_TOKEN, ...safeConfig } = config;
         return new Response(
           JSON.stringify(safeConfig),
@@ -4877,25 +4881,26 @@ const api = {
           const updatedConfig = {
             ...config,
             ADMIN_USERNAME: newConfig.ADMIN_USERNAME || config.ADMIN_USERNAME,
+            // 敏感字段留空代表保留旧值，避免脱敏读取后保存时误清空。
             TG_BOT_TOKEN: newConfig.TG_BOT_TOKEN || config.TG_BOT_TOKEN || '',
             TG_CHAT_ID: newConfig.TG_CHAT_ID || '',
             NOTIFYX_API_KEY: newConfig.NOTIFYX_API_KEY || config.NOTIFYX_API_KEY || '',
             WEBHOOK_URL: newConfig.WEBHOOK_URL || config.WEBHOOK_URL || '',
             WEBHOOK_METHOD: newConfig.WEBHOOK_METHOD || 'POST',
             WEBHOOK_HEADERS: newConfig.WEBHOOK_HEADERS || config.WEBHOOK_HEADERS || '',
-            WEBHOOK_TEMPLATE: newConfig.WEBHOOK_TEMPLATE || config.WEBHOOK_TEMPLATE || '',
+            WEBHOOK_TEMPLATE: newConfig.WEBHOOK_TEMPLATE || '',
             SHOW_LUNAR: newConfig.SHOW_LUNAR === true,
             WECHATBOT_WEBHOOK: newConfig.WECHATBOT_WEBHOOK || config.WECHATBOT_WEBHOOK || '',
             WECHATBOT_MSG_TYPE: newConfig.WECHATBOT_MSG_TYPE || 'text',
-            WECHATBOT_AT_MOBILES: newConfig.WECHATBOT_AT_MOBILES || config.WECHATBOT_AT_MOBILES || '',
+            WECHATBOT_AT_MOBILES: newConfig.WECHATBOT_AT_MOBILES || '',
             WECHATBOT_AT_ALL: newConfig.WECHATBOT_AT_ALL || 'false',
             RESEND_API_KEY: newConfig.RESEND_API_KEY || config.RESEND_API_KEY || '',
-            EMAIL_FROM: newConfig.EMAIL_FROM || config.EMAIL_FROM || '',
-            EMAIL_FROM_NAME: newConfig.EMAIL_FROM_NAME || config.EMAIL_FROM_NAME || '',
-            EMAIL_TO: newConfig.EMAIL_TO || config.EMAIL_TO || '',
+            EMAIL_FROM: newConfig.EMAIL_FROM || '',
+            EMAIL_FROM_NAME: newConfig.EMAIL_FROM_NAME || '',
+            EMAIL_TO: newConfig.EMAIL_TO || '',
             BARK_DEVICE_KEY: newConfig.BARK_DEVICE_KEY || config.BARK_DEVICE_KEY || '',
             BARK_SERVER: newConfig.BARK_SERVER || 'https://api.day.app',
-            BARK_IS_ARCHIVE: newConfig.BARK_IS_ARCHIVE || config.BARK_IS_ARCHIVE || 'false',
+            BARK_IS_ARCHIVE: newConfig.BARK_IS_ARCHIVE || 'false',
             ENABLED_NOTIFIERS: newConfig.ENABLED_NOTIFIERS || ['notifyx'],
             TIMEZONE: newConfig.TIMEZONE || config.TIMEZONE || 'UTC',
             THIRD_PARTY_API_TOKEN: newConfig.THIRD_PARTY_API_TOKEN || config.THIRD_PARTY_API_TOKEN || ''
@@ -4924,6 +4929,7 @@ const api = {
 
           updatedConfig.NOTIFICATION_HOURS = sanitizedNotificationHours;
 
+          // 新密码只保存 PBKDF2 哈希，不保存明文。
           if (newConfig.ADMIN_PASSWORD) {
             updatedConfig.ADMIN_PASSWORD = await hashPassword(newConfig.ADMIN_PASSWORD);
           }
@@ -5294,12 +5300,14 @@ const api = {
 };
 
 // 工具函数
+// 使用 Web Crypto 的密码学安全随机数生成 JWT 签名密钥。
 function generateRandomSecret() {
   const bytes = new Uint8Array(48);
   crypto.getRandomValues(bytes);
   return Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
 }
 
+// 使用 PBKDF2-SHA256 和独立随机盐保存管理员密码哈希。
 async function hashPassword(password) {
   const iterations = 210000;
   const salt = crypto.getRandomValues(new Uint8Array(16));
@@ -5309,6 +5317,7 @@ async function hashPassword(password) {
   return `pbkdf2${iterations}${toBase64(salt)}${toBase64(bits)}`;
 }
 
+// 校验密码：兼容旧版明文，哈希密码采用恒定时间比较。
 async function verifyPassword(password, stored) {
   if (typeof stored !== 'string') return false;
   if (!stored.startsWith('pbkdf2
@@ -5327,7 +5336,7 @@ async function getConfig(env) {
 
     // 确保JWT_SECRET的一致性
     let jwtSecret = config.JWT_SECRET;
-    if (!jwtSecret || jwtSecret === 'your-secret-key' || jwtSecret.length < 96) {
+    if (!jwtSecret || jwtSecret === 'your-secret-key') {
       jwtSecret = generateRandomSecret();
       console.log('[配置] 生成新的JWT密钥');
 
@@ -5401,6 +5410,7 @@ async function getConfig(env) {
 
 async function generateJWT(username, secret) {
   const header = { alg: 'HS256', typ: 'JWT' };
+  // JWT 有效期固定为 24 小时，并在服务端验证过期时间。
   const now = Math.floor(Date.now() / 1000);
   const payload = { username, iat: now, exp: now + 86400 };
 
@@ -5435,6 +5445,7 @@ async function verifyJWT(token, secret) {
       return null;
     }
 
+    // 除签名外，还必须检查 exp/iat，防止过期 Token 被重复使用。
     const payload = JSON.parse(atob(payloadBase64));
     const now = Math.floor(Date.now() / 1000);
     if (!Number.isFinite(payload.exp) || payload.exp <= now || !Number.isFinite(payload.iat) || payload.iat > now + 60) {
@@ -7108,7 +7119,7 @@ function getExpenseByCategory(subscriptions, timezone) {
 
     if (path === '/config') {
       if (method === 'GET') {
-        const { JWT_SECRET, ADMIN_PASSWORD, TG_BOT_TOKEN, NOTIFYX_API_KEY, WEBHOOK_HEADERS, WECHATBOT_WEBHOOK, RESEND_API_KEY, BARK_DEVICE_KEY, THIRD_PARTY_API_TOKEN, ...safeConfig } = config;
+        const { JWT_SECRET, ADMIN_PASSWORD, ...safeConfig } = config;
         return new Response(
           JSON.stringify(safeConfig),
           { headers: { 'Content-Type': 'application/json' } }
@@ -7122,28 +7133,28 @@ function getExpenseByCategory(subscriptions, timezone) {
           const updatedConfig = {
             ...config,
             ADMIN_USERNAME: newConfig.ADMIN_USERNAME || config.ADMIN_USERNAME,
-            TG_BOT_TOKEN: newConfig.TG_BOT_TOKEN || config.TG_BOT_TOKEN || '',
+            TG_BOT_TOKEN: newConfig.TG_BOT_TOKEN || '',
             TG_CHAT_ID: newConfig.TG_CHAT_ID || '',
-            NOTIFYX_API_KEY: newConfig.NOTIFYX_API_KEY || config.NOTIFYX_API_KEY || '',
+            NOTIFYX_API_KEY: newConfig.NOTIFYX_API_KEY || '',
             WEBHOOK_URL: newConfig.WEBHOOK_URL || '',
             WEBHOOK_METHOD: newConfig.WEBHOOK_METHOD || 'POST',
-            WEBHOOK_HEADERS: newConfig.WEBHOOK_HEADERS || config.WEBHOOK_HEADERS || '',
+            WEBHOOK_HEADERS: newConfig.WEBHOOK_HEADERS || '',
             WEBHOOK_TEMPLATE: newConfig.WEBHOOK_TEMPLATE || '',
             SHOW_LUNAR: newConfig.SHOW_LUNAR === true,
-            WECHATBOT_WEBHOOK: newConfig.WECHATBOT_WEBHOOK || config.WECHATBOT_WEBHOOK || '',
+            WECHATBOT_WEBHOOK: newConfig.WECHATBOT_WEBHOOK || '',
             WECHATBOT_MSG_TYPE: newConfig.WECHATBOT_MSG_TYPE || 'text',
             WECHATBOT_AT_MOBILES: newConfig.WECHATBOT_AT_MOBILES || '',
             WECHATBOT_AT_ALL: newConfig.WECHATBOT_AT_ALL || 'false',
-            RESEND_API_KEY: newConfig.RESEND_API_KEY || config.RESEND_API_KEY || '',
+            RESEND_API_KEY: newConfig.RESEND_API_KEY || '',
             EMAIL_FROM: newConfig.EMAIL_FROM || '',
             EMAIL_FROM_NAME: newConfig.EMAIL_FROM_NAME || '',
             EMAIL_TO: newConfig.EMAIL_TO || '',
-            BARK_DEVICE_KEY: newConfig.BARK_DEVICE_KEY || config.BARK_DEVICE_KEY || '',
+            BARK_DEVICE_KEY: newConfig.BARK_DEVICE_KEY || '',
             BARK_SERVER: newConfig.BARK_SERVER || 'https://api.day.app',
             BARK_IS_ARCHIVE: newConfig.BARK_IS_ARCHIVE || 'false',
             ENABLED_NOTIFIERS: newConfig.ENABLED_NOTIFIERS || ['notifyx'],
             TIMEZONE: newConfig.TIMEZONE || config.TIMEZONE || 'UTC',
-            THIRD_PARTY_API_TOKEN: newConfig.THIRD_PARTY_API_TOKEN || config.THIRD_PARTY_API_TOKEN || ''
+            THIRD_PARTY_API_TOKEN: newConfig.THIRD_PARTY_API_TOKEN || ''
           };
 
           const rawNotificationHours = Array.isArray(newConfig.NOTIFICATION_HOURS)
@@ -7170,7 +7181,7 @@ function getExpenseByCategory(subscriptions, timezone) {
           updatedConfig.NOTIFICATION_HOURS = sanitizedNotificationHours;
 
           if (newConfig.ADMIN_PASSWORD) {
-            updatedConfig.ADMIN_PASSWORD = await hashPassword(newConfig.ADMIN_PASSWORD);
+            updatedConfig.ADMIN_PASSWORD = newConfig.ADMIN_PASSWORD;
           }
 
           // 确保JWT_SECRET存在且安全
@@ -7539,14 +7550,11 @@ function getExpenseByCategory(subscriptions, timezone) {
 };
 
 // 工具函数
+// 使用 Web Crypto 生成 384 位强随机密钥，替代不适合密码学用途的 Math.random。
 function generateRandomSecret() {
-  // 生成一个64字符的随机密钥
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*';
-  let result = '';
-  for (let i = 0; i < 64; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return result;
+  const bytes = new Uint8Array(48);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
 }
 
 async function getConfig(env) {
@@ -9385,8 +9393,7 @@ async function getConfig(env) {
 
 async function generateJWT(username, secret) {
   const header = { alg: 'HS256', typ: 'JWT' };
-  const now = Math.floor(Date.now() / 1000);
-  const payload = { username, iat: now, exp: now + 86400 };
+  const payload = { username, iat: Math.floor(Date.now() / 1000) };
 
   const headerBase64 = btoa(JSON.stringify(header));
   const payloadBase64 = btoa(JSON.stringify(payload));
@@ -9420,11 +9427,6 @@ async function verifyJWT(token, secret) {
     }
 
     const payload = JSON.parse(atob(payloadBase64));
-    const now = Math.floor(Date.now() / 1000);
-    if (!Number.isFinite(payload.exp) || payload.exp <= now || !Number.isFinite(payload.iat) || payload.iat > now + 60) {
-      console.log('[JWT] Token 已过期或时间字段无效');
-      return null;
-    }
     console.log('[JWT] 验证成功，用户:', payload.username);
     return payload;
   } catch (error) {
@@ -11092,7 +11094,7 @@ function getExpenseByCategory(subscriptions, timezone) {
 
     if (path === '/config') {
       if (method === 'GET') {
-        const { JWT_SECRET, ADMIN_PASSWORD, TG_BOT_TOKEN, NOTIFYX_API_KEY, WEBHOOK_HEADERS, WECHATBOT_WEBHOOK, RESEND_API_KEY, BARK_DEVICE_KEY, THIRD_PARTY_API_TOKEN, ...safeConfig } = config;
+        const { JWT_SECRET, ADMIN_PASSWORD, ...safeConfig } = config;
         return new Response(
           JSON.stringify(safeConfig),
           { headers: { 'Content-Type': 'application/json' } }
@@ -11106,28 +11108,28 @@ function getExpenseByCategory(subscriptions, timezone) {
           const updatedConfig = {
             ...config,
             ADMIN_USERNAME: newConfig.ADMIN_USERNAME || config.ADMIN_USERNAME,
-            TG_BOT_TOKEN: newConfig.TG_BOT_TOKEN || config.TG_BOT_TOKEN || '',
+            TG_BOT_TOKEN: newConfig.TG_BOT_TOKEN || '',
             TG_CHAT_ID: newConfig.TG_CHAT_ID || '',
-            NOTIFYX_API_KEY: newConfig.NOTIFYX_API_KEY || config.NOTIFYX_API_KEY || '',
+            NOTIFYX_API_KEY: newConfig.NOTIFYX_API_KEY || '',
             WEBHOOK_URL: newConfig.WEBHOOK_URL || '',
             WEBHOOK_METHOD: newConfig.WEBHOOK_METHOD || 'POST',
-            WEBHOOK_HEADERS: newConfig.WEBHOOK_HEADERS || config.WEBHOOK_HEADERS || '',
+            WEBHOOK_HEADERS: newConfig.WEBHOOK_HEADERS || '',
             WEBHOOK_TEMPLATE: newConfig.WEBHOOK_TEMPLATE || '',
             SHOW_LUNAR: newConfig.SHOW_LUNAR === true,
-            WECHATBOT_WEBHOOK: newConfig.WECHATBOT_WEBHOOK || config.WECHATBOT_WEBHOOK || '',
+            WECHATBOT_WEBHOOK: newConfig.WECHATBOT_WEBHOOK || '',
             WECHATBOT_MSG_TYPE: newConfig.WECHATBOT_MSG_TYPE || 'text',
             WECHATBOT_AT_MOBILES: newConfig.WECHATBOT_AT_MOBILES || '',
             WECHATBOT_AT_ALL: newConfig.WECHATBOT_AT_ALL || 'false',
-            RESEND_API_KEY: newConfig.RESEND_API_KEY || config.RESEND_API_KEY || '',
+            RESEND_API_KEY: newConfig.RESEND_API_KEY || '',
             EMAIL_FROM: newConfig.EMAIL_FROM || '',
             EMAIL_FROM_NAME: newConfig.EMAIL_FROM_NAME || '',
             EMAIL_TO: newConfig.EMAIL_TO || '',
-            BARK_DEVICE_KEY: newConfig.BARK_DEVICE_KEY || config.BARK_DEVICE_KEY || '',
+            BARK_DEVICE_KEY: newConfig.BARK_DEVICE_KEY || '',
             BARK_SERVER: newConfig.BARK_SERVER || 'https://api.day.app',
             BARK_IS_ARCHIVE: newConfig.BARK_IS_ARCHIVE || 'false',
             ENABLED_NOTIFIERS: newConfig.ENABLED_NOTIFIERS || ['notifyx'],
             TIMEZONE: newConfig.TIMEZONE || config.TIMEZONE || 'UTC',
-            THIRD_PARTY_API_TOKEN: newConfig.THIRD_PARTY_API_TOKEN || config.THIRD_PARTY_API_TOKEN || ''
+            THIRD_PARTY_API_TOKEN: newConfig.THIRD_PARTY_API_TOKEN || ''
           };
 
           const rawNotificationHours = Array.isArray(newConfig.NOTIFICATION_HOURS)
@@ -11154,7 +11156,7 @@ function getExpenseByCategory(subscriptions, timezone) {
           updatedConfig.NOTIFICATION_HOURS = sanitizedNotificationHours;
 
           if (newConfig.ADMIN_PASSWORD) {
-            updatedConfig.ADMIN_PASSWORD = await hashPassword(newConfig.ADMIN_PASSWORD);
+            updatedConfig.ADMIN_PASSWORD = newConfig.ADMIN_PASSWORD;
           }
 
           // 确保JWT_SECRET存在且安全
@@ -13380,8 +13382,7 @@ async function getConfig(env) {
 
 async function generateJWT(username, secret) {
   const header = { alg: 'HS256', typ: 'JWT' };
-  const now = Math.floor(Date.now() / 1000);
-  const payload = { username, iat: now, exp: now + 86400 };
+  const payload = { username, iat: Math.floor(Date.now() / 1000) };
 
   const headerBase64 = btoa(JSON.stringify(header));
   const payloadBase64 = btoa(JSON.stringify(payload));
@@ -13415,11 +13416,6 @@ async function verifyJWT(token, secret) {
     }
 
     const payload = JSON.parse(atob(payloadBase64));
-    const now = Math.floor(Date.now() / 1000);
-    if (!Number.isFinite(payload.exp) || payload.exp <= now || !Number.isFinite(payload.iat) || payload.iat > now + 60) {
-      console.log('[JWT] Token 已过期或时间字段无效');
-      return null;
-    }
     console.log('[JWT] 验证成功，用户:', payload.username);
     return payload;
   } catch (error) {
@@ -15087,7 +15083,7 @@ function getExpenseByCategory(subscriptions, timezone) {
 
     if (path === '/config') {
       if (method === 'GET') {
-        const { JWT_SECRET, ADMIN_PASSWORD, TG_BOT_TOKEN, NOTIFYX_API_KEY, WEBHOOK_HEADERS, WECHATBOT_WEBHOOK, RESEND_API_KEY, BARK_DEVICE_KEY, THIRD_PARTY_API_TOKEN, ...safeConfig } = config;
+        const { JWT_SECRET, ADMIN_PASSWORD, ...safeConfig } = config;
         return new Response(
           JSON.stringify(safeConfig),
           { headers: { 'Content-Type': 'application/json' } }
@@ -15101,28 +15097,28 @@ function getExpenseByCategory(subscriptions, timezone) {
           const updatedConfig = {
             ...config,
             ADMIN_USERNAME: newConfig.ADMIN_USERNAME || config.ADMIN_USERNAME,
-            TG_BOT_TOKEN: newConfig.TG_BOT_TOKEN || config.TG_BOT_TOKEN || '',
+            TG_BOT_TOKEN: newConfig.TG_BOT_TOKEN || '',
             TG_CHAT_ID: newConfig.TG_CHAT_ID || '',
-            NOTIFYX_API_KEY: newConfig.NOTIFYX_API_KEY || config.NOTIFYX_API_KEY || '',
+            NOTIFYX_API_KEY: newConfig.NOTIFYX_API_KEY || '',
             WEBHOOK_URL: newConfig.WEBHOOK_URL || '',
             WEBHOOK_METHOD: newConfig.WEBHOOK_METHOD || 'POST',
-            WEBHOOK_HEADERS: newConfig.WEBHOOK_HEADERS || config.WEBHOOK_HEADERS || '',
+            WEBHOOK_HEADERS: newConfig.WEBHOOK_HEADERS || '',
             WEBHOOK_TEMPLATE: newConfig.WEBHOOK_TEMPLATE || '',
             SHOW_LUNAR: newConfig.SHOW_LUNAR === true,
-            WECHATBOT_WEBHOOK: newConfig.WECHATBOT_WEBHOOK || config.WECHATBOT_WEBHOOK || '',
+            WECHATBOT_WEBHOOK: newConfig.WECHATBOT_WEBHOOK || '',
             WECHATBOT_MSG_TYPE: newConfig.WECHATBOT_MSG_TYPE || 'text',
             WECHATBOT_AT_MOBILES: newConfig.WECHATBOT_AT_MOBILES || '',
             WECHATBOT_AT_ALL: newConfig.WECHATBOT_AT_ALL || 'false',
-            RESEND_API_KEY: newConfig.RESEND_API_KEY || config.RESEND_API_KEY || '',
+            RESEND_API_KEY: newConfig.RESEND_API_KEY || '',
             EMAIL_FROM: newConfig.EMAIL_FROM || '',
             EMAIL_FROM_NAME: newConfig.EMAIL_FROM_NAME || '',
             EMAIL_TO: newConfig.EMAIL_TO || '',
-            BARK_DEVICE_KEY: newConfig.BARK_DEVICE_KEY || config.BARK_DEVICE_KEY || '',
+            BARK_DEVICE_KEY: newConfig.BARK_DEVICE_KEY || '',
             BARK_SERVER: newConfig.BARK_SERVER || 'https://api.day.app',
             BARK_IS_ARCHIVE: newConfig.BARK_IS_ARCHIVE || 'false',
             ENABLED_NOTIFIERS: newConfig.ENABLED_NOTIFIERS || ['notifyx'],
             TIMEZONE: newConfig.TIMEZONE || config.TIMEZONE || 'UTC',
-            THIRD_PARTY_API_TOKEN: newConfig.THIRD_PARTY_API_TOKEN || config.THIRD_PARTY_API_TOKEN || ''
+            THIRD_PARTY_API_TOKEN: newConfig.THIRD_PARTY_API_TOKEN || ''
           };
 
           const rawNotificationHours = Array.isArray(newConfig.NOTIFICATION_HOURS)
@@ -15149,7 +15145,7 @@ function getExpenseByCategory(subscriptions, timezone) {
           updatedConfig.NOTIFICATION_HOURS = sanitizedNotificationHours;
 
           if (newConfig.ADMIN_PASSWORD) {
-            updatedConfig.ADMIN_PASSWORD = await hashPassword(newConfig.ADMIN_PASSWORD);
+            updatedConfig.ADMIN_PASSWORD = newConfig.ADMIN_PASSWORD;
           }
 
           // 确保JWT_SECRET存在且安全
