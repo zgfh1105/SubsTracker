@@ -1,193 +1,143 @@
-# SubsTracker - 订阅管理与提醒系统
+# SubsTracker（订阅管理与到期提醒系统）
 
-基于Cloudflare Workers的轻量级订阅管理系统，帮助您轻松跟踪各类订阅服务的到期时间，并通过 Telegram、Webhook 等多渠道发送及时提醒。
+> 本文档为中文项目说明。介绍当前仓库的功能、运行结构、部署方式、认证方式、配置管理和维护方法。
 
-![image](https://github.com/user-attachments/assets/22ff1592-7836-4f73-aa13-24e9d43d7064)
+## 1. 项目简介
 
-## ✨ 功能特色
+SubsTracker 是运行在 Cloudflare Workers 上的轻量级订阅管理系统。它用于记录软件、会员、云服务等订阅的周期和到期时间，并按计划发送提醒。
 
-### 🎯 核心功能
-- **订阅管理**：添加、编辑、删除各类订阅服务
-- **智能提醒**：自定义提前提醒天数，自动续订计算
-- **农历显示**：支持农历日期显示，可控制开关
-- **状态管理**：订阅启用/停用，过期状态自动识别
-- **财务追踪**：记录订阅费用，完整的支付历史和统计分析
-- **手动续订**：灵活的续订管理，支持自定义金额、周期和备注
-- **仪表盘**：可视化展示月度/年度支出，支出趋势和分类统计
+主要能力：
+- 管理订阅：新增、编辑、删除、启用或停用。
+- 到期提醒：按提前天数或小时数计算提醒时间。
+- 周期管理：支持常规周期、手动续订和续订记录。
+- 支付追踪：记录金额、币种、支付历史，并汇总支出。
+- 日期显示：支持时区设置和农历显示。
+- 多渠道通知：Telegram、NotifyX、企业微信、Webhook、Resend 邮件、Bark 等（以当前代码和配置页实际支持项为准）。
 
-### 📱 多渠道通知
-- **Telegram**：支持 Telegram Bot 通知
-- **NotifyX**：集成 NotifyX 推送服务
-- **Webhook 通知**：支持自定义 Webhook 推送
-- **企业微信机器人**：支持企业微信群机器人通知
-- **邮件通知**：基于 Resend 的专业邮件服务
-- **Bark**：支持 iOS Bark 推送
-- **自定义 Webhook**：支持自定义请求格式和模板
+## 2. 技术架构
 
-### 🌙 农历功能
-- **农历转换**：支持 1900-2100 年农历转换
-- **智能显示**：列表和编辑页面可控制农历显示
-- **通知集成**：通知消息中可包含农历信息
+- 运行平台：Cloudflare Workers。
+- 数据存储：Cloudflare KV，绑定名称为 `SUBSCRIPTIONS_KV`。
+- 服务端：主要逻辑集中在根目录 `index.js`。
+- 前端：登录页、管理页、配置页和仪表盘由 Worker 返回 HTML，页面通过 Fetch 调用 `/api/*`。
+- 定时任务：Worker 的 `scheduled()` 入口负责检查即将到期的订阅并发送通知。
 
-### 🎨 用户体验
-- **响应式设计**：完美适配桌面端和移动端
-- **备注优化**：长备注自动截断，悬停显示完整内容
-- **实时预览**：日期选择时实时显示对应农历
-- **用户偏好**：记住用户的显示偏好设置
+### 主要请求路径
 
-### 💰 财务管理（新增）
-- **订阅金额追踪**：记录每个订阅的费用，支持多币种
-- **智能仪表盘**：
-  - 📊 月度/年度支出统计，环比趋势分析
-  - 💳 活跃订阅数量，月均支出计算
-  - 📅 最近7天支付记录，即将续费提醒
-  - 📈 按类型/分类的支出排行和占比
-- **支付历史管理**：
-  - 📝 完整的支付记录，支持编辑/删除
-  - 🕒 精确显示计费周期（如：2025年1月15日 - 2025年2月15日）
-  - 📊 累计支出和支付次数统计
-  - 🔄 删除支付记录时自动回退订阅周期
-- **高级续订功能**：
-  - 💵 自定义续订金额（适应价格变动）
-  - 📅 选择续订日期（支持回溯记录）
-  - 🔢 批量续订多个周期（如一次续订12个月）
-  - 📝 添加续订备注（记录优惠活动等）
-  - 👁️ 实时预览新的到期日期
-- **数据洞察**：
-  - 自动计算月均支出和年度总支出
-  - 支出趋势对比（月度环比）
-  - 智能分类统计，了解各类服务占比
+| 路径 | 用途 |
+|---|---|
+| `/` | 登录页面 |
+| `/api/login` | 管理员登录 |
+| `/api/logout` | 退出登录 |
+| `/admin` | 订阅管理页面 |
+| `/admin/config` | 系统配置页面 |
+| `/admin/dashboard` | 支出统计仪表盘 |
+| `/api/config` | 读取或保存系统配置 |
+| `/api/notify/*` | 第三方触发通知的接口 |
 
-## 🚀 一键部署
+## 3. 登录认证与凭证说明
 
-### 点击按钮，一键部署到 CloudFlare Workers,
+当前代码的认证结构：
+1. 登录页面将用户名和密码通过 HTTPS POST 到 `/api/login`。
+2. Worker 从 KV 的 `config` 项读取管理员配置。
+3. 登录成功后，服务端签发 HS256 JWT。
+4. JWT 放入名为 `token` 的 HttpOnly Cookie。
+5. 管理页面和受保护 API 从 Cookie 读取 Token，并调用 JWT 验证函数。
+6. 退出登录时，服务端通过过期 Cookie 让浏览器删除本地 Token。
 
-[![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/wangwangit/SubsTracker)
+重要说明：JWT 是签名令牌，不是加密后的用户资料。不要把密码或 API Secret 放入 JWT Payload。
 
+### 当前版本需要注意的安全事项
 
-> 适用于新部署的,以前部署过的直接替换js中的内容即可!
+请在公网部署前检查并完成以下事项：
+- 修改旧版本默认管理员密码，不能继续使用 `admin/password`。
+- 管理员密码应使用带随机盐的慢速哈希保存，不能明文存储。
+- JWT 必须包含并验证 `exp`，不能只依赖浏览器 Cookie 的 Max-Age。
+- JWT 签名密钥必须由密码学安全随机数生成，并妥善保存。
+- 登录 Cookie 应设置 `HttpOnly; Secure; SameSite=Strict`。
+- 配置 API 不得把 Bot Token、API Key、Webhook URL、第三方访问 Token 返回给浏览器。
+- 第三方 API 优先通过 `Authorization: Bearer <token>` 传递凭证；避免把 Token 放在 URL 路径或查询参数中。
+- 对登录接口增加失败次数限制或速率限制。
 
-## 📋 三步开始使用
+以上是部署安全要求，不代表当前主分支已经全部实现。合并安全整改前，请先在独立分支验证兼容性。
 
-### 1️⃣ 一键部署
-Fork仓库,然后点击自己仓库里的部署按钮，等待部署完成,**注意,KV名称修改为 `SUBSCRIPTIONS_KV`**
-![image.png](https://img.wangwangit.com/file/1751942578108_image.png)
+## 4. Cloudflare 部署
 
-### 2️⃣ 首次登录
-- 访问部署后的域名
-- 默认用户名：`admin`
-- 默认密码：`password`
-
-### 3️⃣ 开始使用
-1. **修改默认密码**（进入系统配置）
-2. **配置通知渠道**（选择一个或多个）
-3. **添加订阅**，设置提醒
-4. **享受智能提醒**！
-
-## 🔧 通知渠道配置
-
-### Telegram
-- **Bot Token**: 从 [@BotFather](https://t.me/BotFather) 获取
-- **Chat ID**: 从 [@userinfobot](https://t.me/userinfobot) 获取
-
-### NotifyX
-- **API Key**: 从 [NotifyX官网](https://www.notifyx.cn/) 获取
-
-### 企业微信机器人
-- **推送 URL**: 参考[官方文档](https://developer.work.weixin.qq.com/document/path/91770)获取
-
-### Webhook 通知
-- **推送 URL**: 根据所使用的 Webhook 服务或自建接口填写，例如 `https://your-service.com/hooks/notify`
-- 支持自定义请求方法、请求头与消息模板
-- **模板占位符**：`{{title}}`、`{{content}}`、`{{tags}}`（多行形式）、`{{tagsLine}}`、`{{timestamp}}`、`{{formattedMessage}}`
-
-### Bark（iOS 推送）
-- **服务器地址**：默认 `https://api.day.app`，也可使用自建服务器
-- **设备 Key**：在 Bark App 内复制
-- **历史记录**：勾选“保存推送”后可保留推送历史
-
-### 邮件通知 (Resend)
-- **API Key**: 从 [Resend 官方教程](https://developers.cloudflare.com/workers/tutorials/send-emails-with-resend/) 获取
-- **发件人邮箱**: 必须是已在 Resend 验证的域名邮箱
-- **收件人邮箱**: 接收通知的邮箱地址
-- 支持 HTML 格式的美观邮件模板
-
-### 🔔 通知时间与时区说明
-- Cloudflare Workers 的 Cron 表达式使用 **UTC 时区**，例如 `0 8 * * *` 表示 UTC 08:00 触发
-- 若希望在北京时间（UTC+8）早上 8 点提醒，可将 Cron 设置为 `0 0 * * *`
-- 若需要小时级提醒，可将 Cron 调整为 `0 * * * *`（每小时执行一次），并在系统配置中指定允许的通知小时
-- 系统配置中的 “系统时区” 用于计算订阅剩余时间和格式化展示，建议与提醒需求保持一致
-
-### 🔐 第三方 API 安全调用
-- 通过 `POST /api/notify/{token}` 可触发系统通知，请在后台配置“第三方 API 访问令牌”
-- 令牌也可通过 `Authorization: Bearer <token>` 或 `?token=<token>` 传入
-- 未配置或令牌不匹配时接口会直接拒绝请求，建议定期更换随机令牌
-
-
-> 💡 **提示**: 系统默认每天早上8点自动检查即将到期的订阅
-
-
-**欢迎大家关注我的公众号**
-
-![39d8d5a902fa1eee6cbbbc8a0dcff4b](https://github.com/user-attachments/assets/96bae085-4299-4377-9958-9a3a11294efc)
-
-
-
-## 🚀 手动部署指南
-
-### 前提条件
-
-- Cloudflare账户
-- Telegram Bot (用于发送通知)
-- 可以直接将代码丢给AI,帮助查漏补缺
+### 准备工作
+- 一个 Cloudflare 账号。
+- 一个 Worker。
+- 一个 KV Namespace。
+- 需要使用的通知渠道账号及对应凭证。
 
 ### 部署步骤
+1. Fork 本仓库，或将代码导入自己的 GitHub 仓库。
+2. 在 Cloudflare Dashboard 创建 Worker。
+3. 将仓库中的 Worker 代码部署到 Worker。
+4. 创建 KV Namespace。
+5. 在 Worker Settings 的 Bindings 中添加 KV Namespace，变量名必须是 `SUBSCRIPTIONS_KV`。
+6. 确认 Worker 绑定了正确的 KV Namespace。
+7. 访问 Worker 域名，使用初始管理员配置登录。
+8. 首次登录后立即设置强管理员密码。
+9. 配置通知渠道并发送测试通知。
+10. 检查 Cron Trigger，确认定时任务按预期执行。
 
-1.登陆cloudflare,创建worker,粘贴本项目中的js代码,点击部署
+### 定时任务和时区
+Cloudflare Cron 使用 UTC 时间。系统配置中的时区用于日期计算和显示，两者不是同一个设置。修改提醒时间时，必须同时检查 Cron 表达式和系统时区。
 
-![image](https://github.com/user-attachments/assets/ff4ac794-01e1-4916-b226-1f4f604dcbd3)
+## 5. 配置项说明
 
+| 配置项 | 用途 | 是否敏感 |
+|---|---|---|
+| `ADMIN_USERNAME` | 管理员用户名 | 否 |
+| `ADMIN_PASSWORD` | 管理员密码或密码哈希 | 是 |
+| `JWT_SECRET` | JWT 签名密钥 | 是 |
+| `THIRD_PARTY_API_TOKEN` | 外部通知 API 访问令牌 | 是 |
+| `TG_BOT_TOKEN` | Telegram Bot 凭证 | 是 |
+| `NOTIFYX_API_KEY` | NotifyX API 凭证 | 是 |
+| `RESEND_API_KEY` | 邮件发送 API 凭证 | 是 |
+| `BARK_DEVICE_KEY` | Bark 设备凭证 | 是 |
+| `WEBHOOK_URL` / `WEBHOOK_HEADERS` | Webhook 地址及请求头 | 通常是 |
+| `TIMEZONE` | 日期计算和显示时区 | 否 |
+| `NOTIFICATION_HOURS` | 允许发送提醒的小时 | 否 |
 
-2.创建KV键值 **SUBSCRIPTIONS_KV**
+不要把真实密钥提交到 GitHub、截图、问题反馈或公开日志中。
 
-![image](https://github.com/user-attachments/assets/c9ebaf3e-6015-4400-bb0a-1a55fd5e14d2)
+## 6. 数据存储与备份
 
+主要业务数据保存在 KV 中：
+- `config`：系统设置和通知渠道配置。
+- `subscriptions`：订阅及其支付历史。
 
-3.给worker绑定上键值对,以及设置定时执行时间!
+建议定期导出并备份 KV 数据。修改、删除或迁移订阅记录前，先完成备份。不要把真实用户数据放进公开示例文件。
 
-![image](https://github.com/user-attachments/assets/25b663b3-8e8e-4386-a499-9b6bf12ead76)
+## 7. 常见问题
 
+**登录后仍然跳回登录页**
+- 检查 Worker 是否使用 HTTPS。
+- 检查浏览器是否保存 Cookie。
+- 检查 `SUBSCRIPTIONS_KV` 是否绑定正确。
+- 检查 JWT 密钥是否在不同 Worker 环境间发生变化。
 
-4.打开worker提供的域名地址,输入默认账号密码: admin  password (或者admin admin123),可以在代码中查看默认账号密码!
+**订阅没有自动提醒**
+- 检查 Cron Trigger 是否启用。
+- 检查订阅是否启用、提醒时间是否正确。
+- 检查系统时区与 Cron 的 UTC 时间换算。
+- 查看 Worker Logs 中的任务执行和通知渠道错误。
 
-![image](https://github.com/user-attachments/assets/5dac1ce0-43a3-4642-925c-d9cf21076454)
+**通知发送失败**
+- 检查对应渠道是否启用。
+- 检查 Token、Webhook、收件人等配置。
+- 使用配置页的测试通知功能。
+- 不要把完整密钥复制到日志或公开 Issue。
 
+## 8. 维护建议
 
-5.前往系统配置,修改账号密码,以及配置tg通知的信息
+- 修改认证逻辑后，必须测试登录、错误密码、Token 过期、退出登录和配置保存。
+- 修改 KV 数据结构前，先设计迁移和回滚方案。
+- 修改通知渠道后，至少完成一次真实测试发送。
+- 生产环境不要依赖默认密码或调试页面。
+- 建议在发布前通过 PR 审查和备份流程。
 
-![image](https://github.com/user-attachments/assets/f6db2089-28a1-439d-9de0-412ee4b2807f)
+## 9. 许可证
 
-
-6.配置完成可以点击测试通知,查看是否能够正常通知,然后就可以正常添加订阅使用了!
-
-![image](https://github.com/user-attachments/assets/af530379-332c-4482-9e6e-229a9e24775e)
-
-
-## 赞助
-本项目 CDN 加速及安全防护由 Tencent EdgeOne 赞助：EdgeOne 提供长期有效的免费套餐，包含不限量的流量和请求，覆盖中国大陆节点，且无任何超额收费，感兴趣的朋友可以点击下面的链接领取
-
-[[Best Asian CDN, Edge, and Secure Solutions - Tencent EdgeOne](https://edgeone.ai/?from=github)]
-
-[![image](https://edgeone.ai/media/34fe3a45-492d-4ea4-ae5d-ea1087ca7b4b.png)](https://edgeone.ai/media/34fe3a45-492d-4ea4-ae5d-ea1087ca7b4b.png)
-
-## 🤝 贡献
-
-欢迎贡献代码、报告问题或提出新功能建议!
-
-## 📜 许可证
-
-MIT License
-
-## Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=wangwangit/SubsTracker&type=Date)](https://www.star-history.com/#wangwangit/SubsTracker&Date)
+请以仓库中的 LICENSE 文件为准。
